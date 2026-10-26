@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Page factory: the whole thing in one file. Python standard library only; needs Chrome or Edge.
 
-Turns design-tool exports ("dc bundles", which only render with JavaScript) into static,
-per-language, SEO-ready pages in the site. The repo root IS the website; this folder starts with
+Turns designer handoffs into SEO-ready pages in the site. Two kinds (see README): design bundles
+("dc bundles", which only render with JavaScript; rendered per language and compiled to static HTML),
+and plain static exports (kept byte for byte, only the SEO <head> is written; `'kind': 'static'`). The repo root IS the website; this folder starts with
 "_" so Jekyll (GitHub Pages) never publishes it. See _factory/README.md.
 
     python _factory/factory.py build [page]     regenerate the pages from their templates
@@ -10,7 +11,7 @@ per-language, SEO-ready pages in the site. The repo root IS the website; this fo
                                                 <head>, links, and that nothing here is published
     python _factory/factory.py serve [port]     preview exactly what GitHub Pages would publish
 
-To add a page: drop its design export next to this file and add an entry to PAGES below.
+To add a page: drop its export next to this file and add an entry to PAGES below (README has both recipes).
 """
 import base64
 import gzip
@@ -348,11 +349,75 @@ def rel_dir(frm, to):
 
 
 def page_dir(cfg, lang):
-    return cfg['out_dir'] if lang == cfg['default_lang'] else f"{cfg['out_dir']}/{lang}"
+    """Site-relative directory of a page: out_dir, plus the language for non-default languages ('' = site root)."""
+    return '/'.join(p for p in (cfg['out_dir'], None if lang == cfg['default_lang'] else lang) if p)
 
 
 def url_of(cfg, lang):
-    return f"{cfg['base_url']}/{page_dir(cfg, lang)}/"
+    d = page_dir(cfg, lang)
+    return f"{cfg['base_url']}/{d}/" if d else f"{cfg['base_url']}/"
+
+
+def seo_tags(cfg, lang, favicon=None):
+    """The SEO part of <head>, from <title> to the Twitter tags. Shared by both page kinds."""
+    langs, default, l, url = list(cfg['langs']), cfg['default_lang'], cfg['langs'][lang], url_of(cfg, lang)
+    og = cfg['og_image'](lang) if cfg.get('og_image') else None
+    return [
+        f"<title>{esc_text(l['title'])}</title>",
+        f"<meta name=\"description\" content=\"{esc_attr(l['description'])}\">",
+        f'<link rel="canonical" href="{url}">',
+        *[f'<link rel="alternate" hreflang="{c}" href="{url_of(cfg, c)}">' for c in langs],
+        f'<link rel="alternate" hreflang="x-default" href="{url_of(cfg, default)}">',
+        '<meta name="robots" content="index, follow, max-image-preview:large">',
+        f"<meta name=\"theme-color\" content=\"{cfg['theme_color']}\">" if cfg.get('theme_color') else '',
+        f'<link rel="icon" type="image/svg+xml" href="{favicon}">' if favicon else '',
+        '<meta property="og:type" content="website">',
+        f"<meta property=\"og:site_name\" content=\"{esc_attr(cfg['site_name'])}\">",
+        f"<meta property=\"og:title\" content=\"{esc_attr(l['title'])}\">",
+        f"<meta property=\"og:description\" content=\"{esc_attr(l['description'])}\">",
+        f'<meta property="og:url" content="{url}">',
+        f"<meta property=\"og:locale\" content=\"{l['og_locale']}\">",
+        *[f"<meta property=\"og:locale:alternate\" content=\"{cfg['langs'][c]['og_locale']}\">" for c in langs if c != lang],
+        f"<meta property=\"og:image\" content=\"{og['url']}\">" if og else '',
+        f"<meta property=\"og:image:alt\" content=\"{esc_attr(og['alt'])}\">" if og else '',
+        f"<meta name=\"twitter:card\" content=\"{'summary_large_image' if og else 'summary'}\">",
+        f"<meta name=\"twitter:title\" content=\"{esc_attr(l['title'])}\">",
+        f"<meta name=\"twitter:description\" content=\"{esc_attr(l['description'])}\">",
+        f"<meta name=\"twitter:image\" content=\"{og['url']}\">" if og else '',
+    ]
+
+
+def json_ld_tag(cfg, lang):
+    ld = cfg['json_ld'](lang, url_of(cfg, lang)) if cfg.get('json_ld') else None
+    return ('<script type="application/ld+json">' + json.dumps(ld, separators=(',', ':'), ensure_ascii=False).replace('<', '\\u003c') + '</script>') if ld else ''
+
+
+def patch_head(html, lang, tags):
+    """Static pages: write the SEO tags into the design's own <head>. The design's versions of those tags are
+    dropped; everything else (fonts, favicon, CSS, scripts, body) is kept byte for byte."""
+    m = re.search(r'(<head\b[^>]*>)(.*?)(</head>)', html, re.S | re.I)
+    if not m:
+        sys.exit('the static template has no <head>')
+    head = m.group(2)
+    for pat in (r'<title\b[^>]*>.*?</title>',
+                r'<meta\b[^>]*\b(?:name|property)\s*=\s*["\'](?:description|robots|theme-color|og:[^"\']*|twitter:[^"\']*)["\'][^>]*>',
+                r'<link\b[^>]*\brel\s*=\s*["\']canonical["\'][^>]*>',
+                r'<link\b(?=[^>]*\bhreflang\s*=)[^>]*>',
+                r'<script\b[^>]*application/ld\+json[^>]*>.*?</script>'):
+        head = re.sub(r'[ \t]*' + pat + r'[ \t]*\n?', '', head, flags=re.S | re.I)
+    block = '\n'.join(tags) + '\n'
+    vp = re.search(r'<meta\b[^>]*\bname\s*=\s*["\']viewport["\'][^>]*>[ \t]*\n?', head, re.I)
+    head = head[:vp.end()] + block + head[vp.end():] if vp else '\n' + block + head
+    out = html[:m.start()] + m.group(1) + head + m.group(3) + html[m.end():]
+    if re.search(r'<html\b[^>]*\blang\s*=', out, re.I):
+        return re.sub(r'(<html\b[^>]*\blang\s*=\s*)(["\'])[^"\']*\2', lambda x: f'{x.group(1)}"{lang}"', out, count=1, flags=re.I)
+    return re.sub(r'<html\b', f'<html lang="{lang}"', out, count=1, flags=re.I)
+
+
+def inject_head(html, prelude, css):
+    """verify only: run `prelude` (JS) before the page's own scripts, and freeze animations."""
+    tag = (f'<script>{prelude}</script>' if prelude else '') + f'<style>{css}</style>'
+    return re.sub(r'(<head\b[^>]*>)', lambda m: m.group(1) + tag, html, count=1, flags=re.I)
 
 
 def store_href(cfg, lang):
@@ -463,6 +528,8 @@ def families_used(*texts):
 # BUILD
 # ======================================================================================
 def build_page(name, cfg, tmp):
+    if cfg.get('kind') == 'static':
+        return build_static(name, cfg)
     langs = list(cfg['langs'])
     default = cfg['default_lang']
     print(f"\n[{name}] {', '.join(langs)} (default {default})")
@@ -540,7 +607,6 @@ def build_page(name, cfg, tmp):
     for lang in langs:
         l = cfg['langs'][lang]
         r = res[lang]
-        url = url_of(cfg, lang)
         prefix = rel_dir(page_dir(cfg, lang), cfg['out_dir'])
         prefix = '' if prefix == './' else prefix
         if len(l['title']) > 62:
@@ -554,36 +620,14 @@ def build_page(name, cfg, tmp):
             data = svg_data_uri(raw.decode('utf-8')) if img['mime'] == 'image/svg+xml' else f"data:{img['mime']};base64,{img['b64']}"
             body = body.replace(f'src="{img["src"]}"', f'src="{data}"')
 
-        og = cfg['og_image'](lang) if cfg.get('og_image') else None
-        ld = cfg['json_ld'](lang, url) if cfg.get('json_ld') else None
         head = [
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
-            f"<title>{esc_text(l['title'])}</title>",
-            f"<meta name=\"description\" content=\"{esc_attr(l['description'])}\">",
-            f'<link rel="canonical" href="{url}">',
-            *[f'<link rel="alternate" hreflang="{c}" href="{url_of(cfg, c)}">' for c in langs],
-            f'<link rel="alternate" hreflang="x-default" href="{url_of(cfg, default)}">',
-            '<meta name="robots" content="index, follow, max-image-preview:large">',
-            f"<meta name=\"theme-color\" content=\"{cfg['theme_color']}\">" if cfg.get('theme_color') else '',
-            f'<link rel="icon" type="image/svg+xml" href="{favicon}">',
-            '<meta property="og:type" content="website">',
-            f"<meta property=\"og:site_name\" content=\"{esc_attr(cfg['site_name'])}\">",
-            f"<meta property=\"og:title\" content=\"{esc_attr(l['title'])}\">",
-            f"<meta property=\"og:description\" content=\"{esc_attr(l['description'])}\">",
-            f'<meta property="og:url" content="{url}">',
-            f"<meta property=\"og:locale\" content=\"{l['og_locale']}\">",
-            *[f"<meta property=\"og:locale:alternate\" content=\"{cfg['langs'][c]['og_locale']}\">" for c in langs if c != lang],
-            f"<meta property=\"og:image\" content=\"{og['url']}\">" if og else '',
-            f"<meta property=\"og:image:alt\" content=\"{esc_attr(og['alt'])}\">" if og else '',
-            f"<meta name=\"twitter:card\" content=\"{'summary_large_image' if og else 'summary'}\">",
-            f"<meta name=\"twitter:title\" content=\"{esc_attr(l['title'])}\">",
-            f"<meta name=\"twitter:description\" content=\"{esc_attr(l['description'])}\">",
-            f"<meta name=\"twitter:image\" content=\"{og['url']}\">" if og else '',
+            *seo_tags(cfg, lang, favicon),
             *[f'<link rel="preload" href="{prefix}assets/fonts/{fn}" as="font" type="font/woff2" crossorigin>' for fn in preloads],
             f'<style>\n{font_css(prefix)}\n</style>',
             '<style>\n' + '\n'.join(r['styles'] + r['cssom']) + '\n</style>',
-            ('<script type="application/ld+json">' + json.dumps(ld, separators=(',', ':'), ensure_ascii=False).replace('<', '\\u003c') + '</script>') if ld else '',
+            json_ld_tag(cfg, lang),
         ]
         out_html = (f'<!DOCTYPE html>\n<html lang="{lang}">\n<head>\n' + '\n'.join(h for h in head if h) +
                     f'\n</head>\n<body>\n{body}\n<script>\n{cfg["inline_script"]}\n</script>\n</body>\n</html>\n')
@@ -597,6 +641,30 @@ def build_page(name, cfg, tmp):
         out.write_text(out_html, encoding='utf-8', newline='\n')
         enc = out_html.encode('utf-8')
         print(f"  wrote {out.relative_to(ROOT)}  {len(enc) / 1024:.0f} KB ({len(gzip.compress(enc, 9)) / 1024:.0f} KB gzipped)")
+
+
+def build_static(name, cfg):
+    """Plain designer exports (already-rendered HTML, e.g. a handoff's publish/index.html). The design's own
+    markup, CSS and scripts are kept as they are; only the SEO <head> is written into the page. One language
+    per template. Optional cfg['html_patch'](html) -> html for a page-specific tweak."""
+    langs = list(cfg['langs'])
+    if len(langs) != 1:
+        sys.exit(f'[{name}] a static page has exactly one language per template (found {langs})')
+    lang = langs[0]
+    l = cfg['langs'][lang]
+    print(f'\n[{name}] static, {lang}')
+    if len(l['title']) > 62:
+        warn(f"{lang} title is {len(l['title'])} chars (>62)")
+    if len(l['description']) > 160:
+        warn(f"{lang} description is {len(l['description'])} chars (>160)")
+    html = patch_head(cfg['template'].read_text(encoding='utf-8'), lang, [t for t in (*seo_tags(cfg, lang), json_ld_tag(cfg, lang)) if t])
+    if cfg.get('html_patch'):
+        html = cfg['html_patch'](html)
+    out = ROOT / page_dir(cfg, lang) / 'index.html'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding='utf-8', newline='\n')
+    enc = html.encode('utf-8')
+    print(f"  wrote {out.relative_to(ROOT)}  {len(enc) / 1024:.0f} KB ({len(gzip.compress(enc, 9)) / 1024:.0f} KB gzipped)")
 
 
 # ======================================================================================
@@ -705,9 +773,11 @@ def make_server(templates, port=0):
             path = unquote(u.path)
             body, ctype = None, 'text/html; charset=utf-8'
             if path.startswith('/__template/'):
-                t = templates.get(path.split('/')[2].removesuffix('.html'))
-                if t:
-                    body = inject_before_body_end(t, '<script>' + FREEZE_JS.replace('__FREEZE__', FREEZE) + '</script>').encode()
+                t = templates.get(path.split('/')[2].removesuffix('.html'))  # (text, kind, parity prelude)
+                if t and t[1] == 'dc':
+                    body = inject_before_body_end(t[0], '<script>' + FREEZE_JS.replace('__FREEZE__', FREEZE) + '</script>').encode()
+                elif t:  # static export: served as designed, animations frozen, parity prelude run first
+                    body = inject_head(t[0], t[2], FREEZE).encode()
             elif path == '/__frame':
                 w, h, src = int(q['w'][0]), int(q['h'][0]), q['src'][0]
                 body = (f'<!doctype html><body style="margin:0;background:#fff"><iframe src="{htmllib.escape(src)}" '
@@ -720,6 +790,8 @@ def make_server(templates, port=0):
                     if 'nojs' in q and f.suffix == '.html':  # no <script> at all == JavaScript off; animations frozen
                         body = re.sub(rb'<script\b[^>]*>.*?</script>', b'', body, flags=re.S)
                         body = body.replace(b'</head>', f'<style>{FREEZE}</style></head>'.encode(), 1)
+                    elif 'static' in q and f.suffix == '.html' and q['static'][0] in templates:  # plain export: its scripts run
+                        body = inject_head(body.decode('utf-8'), templates[q['static'][0]][2], FREEZE).encode()
             if body is None:
                 self.send_response(404)
                 self.end_headers()
@@ -756,13 +828,15 @@ def verify_page(name, cfg, srv, tmp, check):
     base = f'http://127.0.0.1:{srv.server_address[1]}'
     print(f'\n[{name}]')
     shots = {}
+    dc = cfg.get('kind', 'dc') == 'dc'  # design bundle (compiled by us) vs plain static export (kept as designed)
     for lang in langs:
         l = cfg['langs'][lang]
         pdir = page_dir(cfg, lang)
+        purl = f'/{pdir}/' if pdir else '/'
         raw = (ROOT / pdir / 'index.html').read_text(encoding='utf-8')
         s = Scan()
         s.feed(raw)
-        print(f' {lang}  /{pdir}/')
+        print(f' {lang}  {purl}')
         meta = lambda key, val: next((m.get('content') for m in s.metas if m.get(key) == val), None)
         canon = next((k.get('href') for k in s.links if k.get('rel') == 'canonical'), None)
         alts = [(k.get('hreflang'), k.get('href')) for k in s.links if k.get('rel') == 'alternate' and k.get('hreflang')]
@@ -773,30 +847,32 @@ def verify_page(name, cfg, srv, tmp, check):
         check(canon == url_of(cfg, lang), 'canonical is self-referencing', canon)
         check(alts == [(c, url_of(cfg, c)) for c in langs] + [('x-default', url_of(cfg, default))], 'hreflang set (all languages + x-default)')
         check(meta('property', 'og:locale') == l['og_locale'] and meta('property', 'og:url') == url_of(cfg, lang), 'Open Graph locale + url')
-        check(s.h1 == 1, 'exactly one h1')
-        hs = s.headings
-        check(bool(hs) and hs[0] == 1 and all(b <= a + 1 for a, b in zip(hs, hs[1:])), 'heading levels never skip', ''.join(map(str, hs)))
-        store_url = cfg['store']['url']
-        store_links = [a for a in s.anchors if (a.get('href') or '').startswith(store_url)]
-        check(bool(store_links) and all(a['href'] == store_href(cfg, lang) for a in store_links), f'Store links carry hl/cid ({len(store_links)})', store_href(cfg, lang))
-        check(all(a.get('aria-label') == l['store_alt'] for a in store_links) and all(i.get('alt') == l['store_alt'] for i in s.imgs),
-              'badge alt + link label name the game', l['store_alt'])
         check(len(l['title']) <= 62 and len(l['description']) <= 160, 'title <= 62 and description <= 160 chars', f"{len(l['title'])}/{len(l['description'])}")
-        check(all('src' not in x for x in s.scripts), 'no external scripts', 'inline: ' + ', '.join(sorted(x.get('type') or 'js' for x in s.scripts)))
-        check(all((i.get('alt') or '').strip() for i in s.imgs), 'every <img> has alt')
-        check(icon.startswith('data:image/svg+xml'), 'inline SVG favicon')
-        sw = [a for a in s.anchors if a.get('hreflang') and a.get('lang')]
-        cur = [a.get('hreflang') for a in sw if a.get('aria-current') == 'page']
-        check(s.buttons == 0 and len(sw) == len(langs) and cur == [lang], 'language switcher = links, current marked')
-        try:
-            j = json.loads(''.join(s.ld))
-            ld_ok = j.get('inLanguage') == lang and j.get('url') == url_of(cfg, lang)
-        except Exception:
-            ld_ok = False
-        check(ld_ok, 'JSON-LD parses, matches language + url')
+        if dc:  # design bundles: the compiled markup is ours, so its structure is checked too
+            check(s.h1 == 1, 'exactly one h1')
+            hs = s.headings
+            check(bool(hs) and hs[0] == 1 and all(b <= a + 1 for a, b in zip(hs, hs[1:])), 'heading levels never skip', ''.join(map(str, hs)))
+            store_url = cfg['store']['url']
+            store_links = [a for a in s.anchors if (a.get('href') or '').startswith(store_url)]
+            check(bool(store_links) and all(a['href'] == store_href(cfg, lang) for a in store_links), f'Store links carry hl/cid ({len(store_links)})', store_href(cfg, lang))
+            check(all(a.get('aria-label') == l['store_alt'] for a in store_links) and all(i.get('alt') == l['store_alt'] for i in s.imgs),
+                  'badge alt + link label name the game', l['store_alt'])
+            check(all('src' not in x for x in s.scripts), 'no external scripts', 'inline: ' + ', '.join(sorted(x.get('type') or 'js' for x in s.scripts)))
+            check(all((i.get('alt') or '').strip() for i in s.imgs), 'every <img> has alt')
+            check(icon.startswith('data:image/svg+xml'), 'inline SVG favicon')
+            sw = [a for a in s.anchors if a.get('hreflang') and a.get('lang')]
+            cur = [a.get('hreflang') for a in sw if a.get('aria-current') == 'page']
+            check(s.buttons == 0 and len(sw) == len(langs) and cur == [lang], 'language switcher = links, current marked')
+        if cfg.get('json_ld'):
+            try:
+                j = json.loads(''.join(s.ld))
+                ld_ok = j.get('inLanguage', lang) == lang and j.get('url') == url_of(cfg, lang)
+            except Exception:
+                ld_ok = False
+            check(ld_ok, 'JSON-LD parses, matches language + url')
 
         def resolves(href):
-            p = urlparse(urljoin(f'http://x/{pdir}/', href)).path
+            p = urlparse(urljoin(f'http://x{purl}', href)).path
             f = ROOT / unquote(p).lstrip('/')
             f = f / 'index.html' if f.is_dir() else f
             return f.is_file() and is_published(f)
@@ -811,7 +887,8 @@ def verify_page(name, cfg, srv, tmp, check):
         for vp, (w, h) in (('desktop', (1280, 3200)), ('mobile', (390, 5600))):
             shot = {}
             for kind in ('template', 'static'):
-                target = f'{base}/__template/{name}.html' if kind == 'template' else f'{base}/{pdir}/?nojs=1'
+                page_q = '?nojs=1' if dc else f'?static={name}'  # bundles: scripts stripped; plain exports keep their own scripts
+                target = f'{base}/__template/{name}.html' if kind == 'template' else f'{base}{purl}{page_q}'
                 if vp == 'mobile':  # iframe width = viewport width, so the page's media queries see 390px
                     target = f'{base}/__frame?w={w}&h={h}&src=' + target.replace('?', '%3F').replace('=', '%3D').replace('&', '%26')
                     win = (w + 410, h)
@@ -828,15 +905,20 @@ def verify_page(name, cfg, srv, tmp, check):
             if 'sizes' in d:
                 check(False, f'pixel parity {vp}', f'screenshot sizes differ {d["sizes"]}')
             else:
-                check(d['ratio'] <= MAX_DIFF, f'pixel parity {vp} ({w}px wide, scripts stripped)', f'{d["ratio"] * 100:.3f}% differ')
-        # Template word count (from the template's own rendered text) vs the static page's words.
-        arg = {'switcher': {c: {'href': '', 'current': False} for c in langs}, 'homeFrom': '', 'homeTo': ''}
-        page = inject_before_body_end(cfg['template'].read_text(encoding='utf-8'), '<script>' + EXTRACT_JS.replace('__ARG__', json.dumps(arg)) + '</script>')
-        f = tmp / f'words-{name}-{lang}.html'
-        f.write_text(page, encoding='utf-8')
-        data = read_meta(run_chrome(f.as_uri(), *lang_flags(lang), '--virtual-time-budget=20000', '--dump-dom'), '__extract')
-        wa, wb = data['words'], word_count(' '.join(s.text))
-        check(abs(wa - wb) / wa < 0.05, 'visible word count matches template', f'{wa} template / {wb} static')
+                check(d['ratio'] <= MAX_DIFF, f'pixel parity {vp} ({w}px wide, {"scripts stripped" if dc else "scripts run"})', f'{d["ratio"] * 100:.3f}% differ')
+        if dc:  # the template's own rendered text vs the static page's words
+            arg = {'switcher': {c: {'href': '', 'current': False} for c in langs}, 'homeFrom': '', 'homeTo': ''}
+            page = inject_before_body_end(cfg['template'].read_text(encoding='utf-8'), '<script>' + EXTRACT_JS.replace('__ARG__', json.dumps(arg)) + '</script>')
+            f = tmp / f'words-{name}-{lang}.html'
+            f.write_text(page, encoding='utf-8')
+            data = read_meta(run_chrome(f.as_uri(), *lang_flags(lang), '--virtual-time-budget=20000', '--dump-dom'), '__extract')
+            wa, wb = data['words'], word_count(' '.join(s.text))
+            check(abs(wa - wb) / wa < 0.05, 'visible word count matches template', f'{wa} template / {wb} static')
+        else:  # a plain export's body must stay exactly the design's
+            tpl = Scan()
+            tpl.feed(cfg['template'].read_text(encoding='utf-8'))
+            wa, wb = word_count(' '.join(tpl.text)), word_count(' '.join(s.text))
+            check(wa == wb, 'page text identical to the template', f'{wa} / {wb} words')
 
     # Negative control: the pixel diff must be able to see a real difference.
     if len(langs) > 1 and (langs[0], 'desktop') in shots:
@@ -889,7 +971,8 @@ def main():
                 if not ok:
                     failures.append(label)
             verify_publishing(check)
-            srv = start_server({n: PAGES[n]['template'].read_text(encoding='utf-8') for n in PAGES})
+            srv = start_server({n: (PAGES[n]['template'].read_text(encoding='utf-8'), PAGES[n].get('kind', 'dc'), PAGES[n].get('parity_prelude', ''))
+                                for n in PAGES})
             try:
                 for n in names:
                     verify_page(n, PAGES[n], srv, tmp, check)
