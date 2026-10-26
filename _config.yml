@@ -1,0 +1,8 @@
+# GitHub Pages builds this repo with Jekyll. There is deliberately NO .nojekyll file:
+# it would switch Jekyll off, and with it the exclusion below.
+#
+# Plain HTML files pass through Jekyll untouched. Folders starting with "_" (like _factory/)
+# are skipped by Jekyll anyway; it is listed here too so the intent is explicit.
+# `python _factory/factory.py verify` checks that this stays true.
+exclude:
+  - _factory
