@@ -120,12 +120,15 @@ local; Pages build ~30 s. `verify` only *models* Jekyll (`is_published`), the de
 
 ## Domain
 
-Now: `BASE_URL = 'https://thebrousse.github.io/runtimenorth'` at the top of `factory.py`. Planned: `runtimenorth.com`
-(the handoff's `CNAME` says so). **Do not commit that CNAME before DNS is ready**: github.io would redirect to a
-domain that does not resolve. On the day:
-1. GitHub Settings > Pages: set the domain, enforce HTTPS (GitHub commits `CNAME` itself: `git pull` before the next push); DNS per GitHub docs.
-2. Set `BASE_URL = 'https://runtimenorth.com'` (no path), `build`, `verify`, push.
-3. Search Console (Domain property, DNS TXT), then "Request indexing" for the pages.
+**Live on `https://runtimenorth.com` since 2026-11-12** (`BASE_URL` at the top of `factory.py`). Registrar and DNS
+are at Netim (nameservers `ns1-3.netim.net`; zone file under Domains > runtimenorth.com > Zone file). Zone: 4 A
+records on the apex (`185.199.108-111.153`), `www` CNAME -> `thebrousse.github.io`, the Netim NS/MX/SPF records, and
+the Search Console TXT (`google-site-verification=...`, keep it or verification is lost). GitHub Pages custom domain
+`runtimenorth.com` with Enforce HTTPS; GitHub committed `CNAME` itself. `www` redirects to the apex. Search Console
+Domain property verified; indexing requested for `/`, `/scatterpop/`, `/scatterpop/fr/`, `/scatterpop/es/`.
+Notes: the apex was parked at Netim (`185.26.106.234`) before the switch, so Google's first crawl of `/` (2026-11-11)
+reported "Excluded by noindex"; the live page has no robots tag, re-inspect after a few days. Local resolvers can
+cache the old parking IP for up to the old TTL (1 h): test with `curl --resolve runtimenorth.com:443:185.199.108.153`.
 
 Proved by simulation: canonical, 4 hreflang, og:url and both JSON-LD URLs all follow `BASE_URL`; nothing else does.
 
