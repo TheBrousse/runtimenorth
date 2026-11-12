@@ -38,7 +38,7 @@ ROOT = FACTORY.parent  # the repo root is the website
 # PAGE DEFINITIONS: what the design export does NOT contain (URLs, per-language <head> text,
 # structured data, favicon, scripts). Re-exporting a template never touches this.
 # ======================================================================================
-BASE_URL = 'https://thebrousse.github.io/runtimenorth'  # no trailing slash; one line to change for a custom domain
+BASE_URL = 'https://runtimenorth.com'  # no trailing slash; one line to change for a custom domain
 SITE_NAME = 'Runtime North'
 STORE_URL = 'https://apps.microsoft.com/detail/9PDWLDH31XLZ'
 
