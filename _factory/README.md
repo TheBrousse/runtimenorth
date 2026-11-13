@@ -126,6 +126,9 @@ records on the apex (`185.199.108-111.153`), `www` CNAME -> `thebrousse.github.i
 the Search Console TXT (`google-site-verification=...`, keep it or verification is lost). GitHub Pages custom domain
 `runtimenorth.com` with Enforce HTTPS; GitHub committed `CNAME` itself. `www` redirects to the apex. Search Console
 Domain property verified; indexing requested for `/`, `/scatterpop/`, `/scatterpop/fr/`, `/scatterpop/es/`.
+Bing Webmaster Tools (Microsoft account, site `https://runtimenorth.com/`, added manually, not imported from Google):
+verified by a DNS CNAME at Netim (`6d417e5f099a5e8e4ae75b6984119f1e` -> `verify.bing.com`, keep it), same four URLs
+submitted via URL Submission on 2026-11-13. Bing also feeds DuckDuckGo, Yahoo and Copilot.
 Notes: the apex was parked at Netim (`185.26.106.234`) before the switch, so Google's first crawl of `/` (2026-11-11)
 reported "Excluded by noindex"; the live page has no robots tag, re-inspect after a few days. Local resolvers can
 cache the old parking IP for up to the old TTL (1 h): test with `curl --resolve runtimenorth.com:443:185.199.108.153`.
