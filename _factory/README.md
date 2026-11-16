@@ -84,6 +84,9 @@ unhides one at random, so crawlers without JS see no content; title/description 
 - **No visual change**, ever: `verify` fails above 0.2% pixel difference (it reports 0.000% today). It compares the
   generated page, with scripts stripped, to the template with JS, at 1280px and 390px, in every language, and has a
   self-test (EN vs FR must be flagged).
+  One deliberate exception, `css_fixes` in `PAGES` (verify adds it to the template too, so parity stays 0.000%):
+  `nav{position:relative;z-index:1}`, because on phones the hero's floating purple brick covered the language
+  switcher (reported on iPhone, 2026-11-16). Desktop is unaffected.
 - **No image files** in the repo: favicon and Store badge are inline data URIs. Fonts are files (3 `woff2`).
 - **Nothing superfluous.** Considered and dropped, so do not re-litigate without a new reason:
   FAQ / how-to / facts sections and extra "similar games" pages (visible content, owner said no); FAQPage/HowTo schema

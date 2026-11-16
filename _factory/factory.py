@@ -159,6 +159,10 @@ PAGES = {
         'preload_families': ['Baloo 2', 'Nunito'],  # above-the-fold fonts; their latin file is preloaded
         'favicon_svg': SCATTERPOP_FAVICON_SVG,
         'inline_script': STORE_LINK_SCRIPT,
+        # CSS added on top of the design. verify applies it to the template too, so parity still compares like for like.
+        # The hero's floating purple brick (top:-4% of the hero) rises into the nav on phones and covered the
+        # language switcher; the nav is lifted above it. Desktop is unchanged (the brick sits in the nav's empty middle).
+        'css_fixes': 'nav{position:relative;z-index:1}',
         'json_ld': scatterpop_json_ld,
         # Optional: 'og_image': lambda lang: {'url': 'https://…/og.jpg', 'alt': '…'} to emit og:image /
         # twitter:image. Off on purpose: it must be a real file and this site keeps image files out.
@@ -626,7 +630,7 @@ def build_page(name, cfg, tmp):
             *seo_tags(cfg, lang, favicon),
             *[f'<link rel="preload" href="{prefix}assets/fonts/{fn}" as="font" type="font/woff2" crossorigin>' for fn in preloads],
             f'<style>\n{font_css(prefix)}\n</style>',
-            '<style>\n' + '\n'.join(r['styles'] + r['cssom']) + '\n</style>',
+            '<style>\n' + '\n'.join(r['styles'] + r['cssom'] + [cfg.get('css_fixes', '')]).rstrip() + '\n</style>',
             json_ld_tag(cfg, lang),
         ]
         out_html = (f'<!DOCTYPE html>\n<html lang="{lang}">\n<head>\n' + '\n'.join(h for h in head if h) +
@@ -773,9 +777,9 @@ def make_server(templates, port=0):
             path = unquote(u.path)
             body, ctype = None, 'text/html; charset=utf-8'
             if path.startswith('/__template/'):
-                t = templates.get(path.split('/')[2].removesuffix('.html'))  # (text, kind, parity prelude)
+                t = templates.get(path.split('/')[2].removesuffix('.html'))  # (text, kind, parity prelude, css fixes)
                 if t and t[1] == 'dc':
-                    body = inject_before_body_end(t[0], '<script>' + FREEZE_JS.replace('__FREEZE__', FREEZE) + '</script>').encode()
+                    body = inject_before_body_end(t[0], '<script>' + FREEZE_JS.replace('__FREEZE__', FREEZE + t[3]) + '</script>').encode()
                 elif t:  # static export: served as designed, animations frozen, parity prelude run first
                     body = inject_head(t[0], t[2], FREEZE).encode()
             elif path == '/__frame':
@@ -971,7 +975,7 @@ def main():
                 if not ok:
                     failures.append(label)
             verify_publishing(check)
-            srv = start_server({n: (PAGES[n]['template'].read_text(encoding='utf-8'), PAGES[n].get('kind', 'dc'), PAGES[n].get('parity_prelude', ''))
+            srv = start_server({n: (PAGES[n]['template'].read_text(encoding='utf-8'), PAGES[n].get('kind', 'dc'), PAGES[n].get('parity_prelude', ''), PAGES[n].get('css_fixes', ''))
                                 for n in PAGES})
             try:
                 for n in names:
